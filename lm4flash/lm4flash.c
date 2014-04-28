@@ -117,6 +117,7 @@ static uint32_t le32_to_cpu(const uint32_t x)
 static int do_verify = 0;
 static int erase_used = 0;
 static uint32_t start_addr = 0;
+static int do_reset_board = 0;
 
 #define cpu_to_le32 le32_to_cpu
 
@@ -576,6 +577,16 @@ static int write_firmware(libusb_device_handle *handle, FILE *f)
 }
 
 
+static int reset_board(libusb_device_handle *handle)
+{
+	MEM_WRITE(FP_CTRL, 0x3000000);
+	SEND_COMMAND("debug hreset");
+	SEND_COMMAND("set vectorcatch 0");
+	SEND_COMMAND("debug disable");
+	return 0;
+}
+
+
 enum flasher_error {
 	FLASHER_SUCCESS,
 	FLASHER_ERR_LIBUSB_FAILURE,
@@ -711,6 +722,8 @@ static void flasher_usage()
 	printf("\t\tWrite binary at the given address (in hexadecimal)\n");
 	printf("\t-s SERIAL\n");
 	printf("\t\tFlash device with the following serial\n");
+	printf("\t-r\n");
+	printf("\t\tReset the board\n");
 }
 
 
@@ -763,14 +776,18 @@ static int flasher_flash(const char *serial, const char *rom_name)
 		goto done;
 	}
 
-	f = fopen(rom_name, "rb");
-	if (!f) {
-		perror("fopen");
-		retval = 1;
-		goto done;
-	}
+	if (rom_name != NULL) {
+		f = fopen(rom_name, "rb");
+		if (!f) {
+			perror("fopen");
+			retval = 1;
+			goto done;
+		}
 
-	retval = write_firmware(handle, f);
+		retval = write_firmware(handle, f);
+	} else if (do_reset_board == 1) {
+		reset_board(handle);
+	}
 
 done:
 	if (f)
@@ -792,7 +809,7 @@ int main(int argc, char *argv[])
 	const char *rom_name = NULL;
 	int opt;
 
-	while ((opt = getopt(argc, argv, "VES:hvs:")) != -1) {
+	while ((opt = getopt(argc, argv, "VES:hvs:r")) != -1) {
 		switch (opt) {
 		case 'V':
 			show_version();
@@ -814,17 +831,25 @@ int main(int argc, char *argv[])
 		case 's':
 			serial = optarg;
 			break;
+		case 'r':
+			do_reset_board = 1;
+			break;
 		default:
 			flasher_usage();
 			return EXIT_FAILURE;
 		}
 	}
 
-	if (optind >= argc) {
-		flasher_usage();
-		return EXIT_FAILURE;
-	} else
-		rom_name = argv[optind];
+	if (do_reset_board == 0) {
+		if (optind >= argc) {
+			flasher_usage();
+			return EXIT_FAILURE;
+		} else {
+			rom_name = argv[optind];
+		}
+	} else {
+		rom_name = NULL;
+	}
 
 	if (start_addr && (start_addr % FLASH_ERASE_SIZE)) {
 		printf("Address given to -S must be 0x%x aligned\n", FLASH_ERASE_SIZE);
